@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { storage } from '../../lib/storage';
-import { Table, DiningSession, MenuCategory, MenuItem, Order, OrderItem } from '../../types';
+import { Table, DiningSession, MenuCategory, MenuItem, Order, OrderItem, Bill, BillLineItem } from '../../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import { ShoppingBag, ChevronLeft, Plus, Minus, CreditCard, Clock, Check, X, QrCode } from 'lucide-react';
@@ -106,25 +106,42 @@ export default function TableSession() {
     
     // Auto-generate bill for self-checkout
     const bills = storage.getBills();
-    let bill = bills.find(b => b.sessionId === session.id);
+    let bill: Bill | undefined = bills.find(b => b.sessionId === session.id);
     
     if (!bill) {
       const validOrders = storage.getOrders().filter(o => o.sessionId === session.id && o.status !== 'cancelled');
-      const allItems: OrderItem[] = validOrders.flatMap(o => o.items);
-      const subtotal = allItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      
+      const billItems: BillLineItem[] = [];
+      validOrders.forEach(order => {
+        order.items.forEach(item => {
+          billItems.push({
+            orderId: order.id,
+            orderItemId: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            lineTotal: item.price * item.quantity
+          });
+        });
+      });
+
+      const subtotal = billItems.reduce((sum, item) => sum + item.lineTotal, 0);
       const taxAmount = subtotal * (settings.taxRate / 100);
       const serviceAmount = subtotal * (settings.serviceCharge / 100);
       const total = subtotal + taxAmount + serviceAmount;
 
       bill = {
         id: uuidv4(),
+        reference: `BIL-${Math.floor(Math.random() * 10000)}`,
         sessionId: session.id,
         tableId: session.tableId,
-        reference: `BIL-${Math.floor(Math.random() * 10000)}`,
-        items: allItems,
+        items: billItems,
         subtotal,
+        taxRate: settings.taxRate,
         taxAmount,
+        serviceChargeRate: settings.serviceCharge,
         serviceChargeAmount: serviceAmount,
+        discountAmount: 0,
         totalAmount: total,
         status: 'open',
         createdAt: new Date().toISOString(),
@@ -173,17 +190,16 @@ export default function TableSession() {
     const sessionId = uuidv4();
     const newSession: DiningSession = {
       id: sessionId,
+      reference: `SES-${Math.floor(Math.random() * 10000)}`,
       tableId: table.id,
       status: 'active',
-      guests: 2,
-      startTime: new Date().toISOString(),
+      partySize: 2,
+      startedAt: new Date().toISOString(),
+      statusHistory: [{ status: 'active', timestamp: new Date().toISOString() }],
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     storage.updateSessions([...storage.getSessions(), newSession]);
-    const updatedTables = storage.getTables().map(t => 
-      t.id === table.id ? { ...t, operationalStatus: 'occupied' as const } : t
-    );
-    storage.updateTables(updatedTables);
 
     // Create dummy order
     const menuItems = storage.getMenuItems();
